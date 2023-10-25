@@ -82,7 +82,7 @@ At the end of the demo application, either terminating normally and successfully
 
 `fifo_rx` statistics are:
 
-- `max_fifo_rx_nlines`: the maximum `fifo_rx_nlines` encountered
+- `max_fifo_rx_nlines`: the maximum `fifo_rx_nlines` encountered. This is basically the difference between the write and the read indices, the distance between the `sensor_reader` and the `file_writer`.
 - `cnt_line_too_small`: how many times a line was smaller than DIFF_FIFO value
 - `line_usage`: this is a histogram of how many times a line of certain size (number of samples) is used. It contains count values from 0 to maximum number of samples in a line.
 - `line_usage_total_nsamples`: sum from 0 to maximum number of samples in a line multiplied by number of times a line of that size is used. This is basically the cumulative number of samples stored in the circular 2D buffer.
@@ -97,7 +97,7 @@ At the end of the demo application, either terminating normally and successfully
 
 It is expected that the `samples_written`, `samples_read` and `line_usage_total_nsamples` which identifies the samples read, stored in the circular 2D buffer (lines) and written to file are all equal and equal or greater than `nsamples`.
 
-In a successful run which is actually the expected result, `cnt_ovrs` has to be zero (no FIFO overruns), `cnt_line_too_small` and `max_fifo_rx_nlines` should not be too high. See [Performance](Performance) for some examples.
+In a successful run which is actually the expected result, `cnt_ovrs` has to be zero (no FIFO overruns), `max_fifo_rx_nlines` and `cnt_line_too_small` should not be too high. See [Performance](Performance) for some examples.
 
 ## Metadata
 
@@ -126,8 +126,24 @@ Timestamp value is an 32-bit unsigned integer, and it wraps back to 0 after the 
 
 # Result
 
-Below is a plot of 720 seconds of samples, converted with iis3dwb-fifo2xyzt and plotted with MATLAB after mean is subtracted. The sensor was attached to a 3D printer, hence a lot of movements.
+Below is a plot of 720 seconds of samples, converted with iis3dwb-fifo2xyzt and plotted with MATLAB after mean is subtracted.
 
 ![plot](plot.png)
 
 # Performance
+
+## 720 seconds (12 minutes)
+
+The run which generated the 720 seconds plot above resulted:
+
+- cnt_ovrs: 0
+- max_fifo_rx_nlines: 21
+- cnt_line_too_small: 0
+
+This is quite a perfect run, no FIFO overruns, no line was too small and `max_fifo_rx_nlines` is pretty small comparing to available number of lines (1M).
+
+## 3600 (1 hour)
+
+## 21600 (6 hours)
+
+## 86400 (24 hours)
