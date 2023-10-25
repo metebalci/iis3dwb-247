@@ -1,8 +1,10 @@
 # iis3dwb-247
 
-This is a demo application to save data from ST's IIS3DWB wideband accelerometer sensor directly to a persistent storage (SD card). Therefore, it can be used 24/7, as long as there is enough free storage.
+This is a demo application to save data from ST's [IIS3DWB ultra-wide bandwidth vibration sensor](https://www.st.com/en/mems-and-sensors/iis3dwb.html) directly to a persistent storage (SD card). Therefore, it can be used 24/7, as long as there is enough free storage.
 
 It is designed to be used on a Raspberry Pi (tested on a RPi 4 4GB) running the standard Raspian (64-bit) distribution.
+
+It does not use any 3rd party code, only requirement is the availability of spidev.
 
 Although the implementation is coupled to an IIS3DWB sensor, the design and the source code can be used as an example of a producer-consumer pattern.
 
@@ -38,7 +40,7 @@ A traditional circular buffer keeps a single byte at each position. It is possib
 
 The empty and full status of this circular 2D buffer is checked by the threads using `fifo_rx_nlines` variable. Hence, this is the only time a mutex is used when increasing or decreasing this variable.
 
-The default compile-time configuration of the circular 2D buffer has 1024 lines where each line can contain maximum 128 samples. Thus, the circular 2D buffer consumes `1K * 128 * 7 = 896KB` memory. Itmight be possible 
+The default compile-time configuration of the circular 2D buffer has 1M (1024x1024) lines where each line can contain maximum 64 samples. Thus, the circular 2D buffer consumes `1M*(2+64*7 =~ 450MB` memory. It is probably possible to decrease this, I have not tested.
 
 ## Handling FIFO Overrun
 
@@ -110,9 +112,9 @@ In addition to `fifo.bin`, a file named `fifo.bin.meta` is also created. This fi
 - `double afactor`: accelerometer factor that has to be multiplied by accelerometer sample values to convert them to g units
 - `double tfactor`: time factor that has to be multiplied by the timestamp sample values to convert them to second units. This is the same as the calculated actual timestamp resolution.
 
-## 64-bit
+## 64-bit Support
 
-Because the concept is to record 24/7, some variables and files can pass 32-bit limit. The relevant variables are defined as `uint64_t`. For the files, `_FILE_OFFSET_BITS 64` is defined, so there is no 2GB limit.
+Because the concept of this demo is to record 24/7, some variables and files can easily pass 32-bit limit. The relevant variables are defined as `uint64_t`. Also, `_FILE_OFFSET_BITS 64` is defined, so there is no 2GB limit.
 
 ## Timestamp Overflow
 
@@ -124,8 +126,8 @@ Timestamp value is an 32-bit unsigned integer, and it wraps back to 0 after the 
 
 # Result
 
-Below is a recording of 900s, converted with iis3dwb-fifo2xyzt and plotted with MATLAB.
+Below is a plot of 720 seconds of samples, converted with iis3dwb-fifo2xyzt and plotted with MATLAB after mean is subtracted. The sensor was attached to a 3D printer, hence a lot of movements.
 
-![plot of 900s](plot-900s.png)
+![plot](plot.png)
 
 # Performance
