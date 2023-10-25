@@ -120,6 +120,6 @@ Timestamp value is an 32-bit unsigned integer, and it wraps back to 0 after the 
 
 # fifo2xyzt
 
-A correspondent application [iis3dwb-fifo2xyzt](https://github.com/metebalci/iis3dwb-fifo2xyzt) is developed to create x,y,x and t arrays from `fifo.bin` and `fifo.bin.meta`. This application also handles the timestamp overflow condition.
+[iis3dwb-fifo2xyzt](https://github.com/metebalci/iis3dwb-fifo2xyzt) is a tool to create x,y,z and t arrays from `fifo.bin` and `fifo.bin.meta`. This tool also handles the timestamp overflow condition.
 
 # Performance
