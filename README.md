@@ -122,4 +122,10 @@ Timestamp value is an 32-bit unsigned integer, and it wraps back to 0 after the 
 
 [iis3dwb-fifo2xyzt](https://github.com/metebalci/iis3dwb-fifo2xyzt) is a tool to create x,y,z and t arrays from `fifo.bin` and `fifo.bin.meta`. This tool also handles the timestamp overflow condition.
 
+# Result
+
+Below is a recording of 900s, converted with iis3dwb-fifo2xyzt and plotted with MATLAB.
+
+!(plot-900s.png)
+
 # Performance
