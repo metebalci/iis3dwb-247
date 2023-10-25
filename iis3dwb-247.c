@@ -22,7 +22,7 @@
 
 // modify these if there is a need
 #define SPI_DEVICE  "/dev/spidev0.0"
-#define FULL_SCALE  2
+#define FULL_SCALE  4
 // do not modify these unless absolutely necessary
 #define SPI_SPEED   10000000
 #define SPI_MODE    SPI_MODE_0
@@ -32,8 +32,8 @@
 // only to be changed if errors are encountered
 // number of lines, limited by available memory
 #define NUM_FIFO_RX_LINES (1024*1024)
-// warning this should be maximum 254
-#define FIFO_RX_LINE_MAX_SAMPLES 128
+// warning this should be maximum 255 (0xFF)
+#define FIFO_RX_LINE_MAX_SAMPLES 64
 
 // uncomment this to print out SPI communications
 //#define PRINT_SPI_TRACE
@@ -44,6 +44,7 @@ int ret = 0;
 // breaks are used to early terminate the loops in threads
 bool sensor_reader_break = false;
 bool file_writer_break = false;
+bool file_writer_wait_break = false;
 // flag to check if file writer is terminated or still running 
 bool file_writer_terminated = false;
 // the duration to collect data is given at command line
@@ -58,10 +59,14 @@ uint64_t nsamples = 0;
 struct spi_ioc_transfer trx = {0};
 // to sync threads for accessing shared data
 pthread_mutex_t lock;
+pthread_mutex_t print_stat_lock;
 
 // buffers for spi transfers used for register access only
 uint8_t tx_buffer[4096];
 uint8_t rx_buffer[4096];
+
+// how often progress should be displayed
+double progress_seconds;
 
 // this is only used for dumping the register values for debug
 // used by dump_regs()
@@ -134,10 +139,6 @@ uint32_t fifo_rx_write_idx = 0;
 uint32_t fifo_rx_read_idx = 0;
 // number of slots utilized, maximum is NUM_FIFO_RX_LINES
 uint32_t fifo_rx_nlines = 0;
-// histogram like data of fifo_rx usage
-// index is nsample (0..FIFO_RX_LINE_MAX_SAMPLES)
-// value is how many times this nsample is used for a line
-uint32_t line_usage_histogram[FIFO_RX_LINE_MAX_SAMPLES] = {0};
 
 // dump 
 void hexdump(uint8_t* p, uint32_t len) {
@@ -444,6 +445,7 @@ double iis3dwb_timestamp_resolution_actual() {
 void sig_handler(int signum) {
   sensor_reader_break = true;
   file_writer_break = true;
+  file_writer_wait_break = true;
 }
 
 // the file_writer thread
@@ -453,7 +455,9 @@ void *file_writer(void *vargp) {
   FILE* fp = fopen(TEMP_FILE, "wb");
 
   uint64_t samples_written = 0;
-  uint32_t cnt_read_idx_reset = 0;
+  uint64_t cnt_read_idx_reset = 0;
+  uint64_t cnt_pos_fifo_rx_nlines = 0;
+  uint64_t cnt_neg_fifo_rx_nlines = 0;
 
   // samples_written can be = or > than nsamples
   while (samples_written < nsamples) {
@@ -465,6 +469,8 @@ void *file_writer(void *vargp) {
     // the worst case is it might be read as 0, 
     //  and in the next iteration it will be >0
     if (fifo_rx_nlines > 0) {
+
+      cnt_pos_fifo_rx_nlines++;
 
       uint8_t* current_line = fifo_rx + fifo_rx_read_idx*FIFO_RX_LINE_SIZE;
 
@@ -496,23 +502,29 @@ void *file_writer(void *vargp) {
       fifo_rx_nlines--;
       pthread_mutex_unlock(&lock);
 
+    } else {
+
+      cnt_neg_fifo_rx_nlines++;
+
     }
 
   }
 
   fclose(fp);
 
-  pthread_mutex_lock(&lock);
+  pthread_mutex_lock(&print_stat_lock);
   printf("\n");
   printf("------ file_writer stats ------\n");
   printf("samples_written:        %llu\n", samples_written);
   printf("bytes_written:          %llu\n", (samples_written*7));
-  printf("fifo_rx_read_idx:       %u\n", fifo_rx_read_idx);
-  printf("cnt_read_idx_reset:     %u\n", cnt_read_idx_reset);
-  printf("------\n\n");
-  // mark terminated, so sensor_reader can also terminate without waiting
+  printf("cnt_pos_fifo_rx_nlines: %llu\n", cnt_pos_fifo_rx_nlines);
+  printf("cnt_neg_fifo_rx_nlines: %llu\n", cnt_neg_fifo_rx_nlines);
+  printf("cnt_read_idx_reset:     %llu\n", cnt_read_idx_reset);
+  printf("------\n");
+  pthread_mutex_unlock(&print_stat_lock);
+
+  // mark terminated
   file_writer_terminated = true;
-  pthread_mutex_unlock(&lock);
 
   return NULL;
 
@@ -527,25 +539,28 @@ void *sensor_reader(void *vargp) {
   fifo_tx[0] = 0x80 | REG_FIFO_DATA_OUT_TAG;
 
   uint64_t samples_read = 0;
-  uint32_t cnt_ovrs = 0;
+  uint64_t cnt_ovrs = 0;
   uint32_t last_cnt_ovrs = 0;
   uint32_t max_diff_fifo = 0;
   uint64_t total_diff_fifo = 0;
   uint64_t cnt_pos_diff_fifos = 0;
   uint64_t cnt_neg_diff_fifos = 0;
-  uint32_t cnt_line_is_too_small = 0;
+  uint64_t cnt_line_is_too_small = 0;
   uint32_t last_cnt_line_is_too_small = 0;
-  uint32_t cnt_write_idx_reset = 0;
+  uint64_t cnt_write_idx_reset = 0;
   uint32_t max_fifo_rx_nlines = 0;
+
+  // histogram like data of fifo_rx usage
+  // index is nsample (0..FIFO_RX_LINE_MAX_SAMPLES)
+  // value is how many times this nsample is used for a line
+  uint64_t line_usage_histogram[FIFO_RX_LINE_MAX_SAMPLES] = {0};
 
   uint8_t samples_to_read = 0;
 
-  struct timespec tstart={0,0}, tlast={0,0}, tnow={0,0};
+  struct timespec tlast={0,0}, tnow={0,0};
 
   // disable printf buffering for progress updates
   setbuf(stdout, NULL);
-
-  clock_gettime(CLOCK_MONOTONIC, &tstart);
 
   // enable the sensor 
   iis3dwb_enable();
@@ -563,65 +578,28 @@ void *sensor_reader(void *vargp) {
 
     const bool ovr = (rx_buffer[2] & 0x40) != 0;
 
-    if (ovr) {
-
-      cnt_ovrs++;
-
-      // when overrun happens
-      // discard until a timestamp is found
-      // this implementation is not totally correct and not optimized
-      // it reads one sample at a time,
-      //  assuming the next timestamp is very close
-      // also the timestamp is not kept,
-      //  thus the next accelerometer data will also be skipped when saving 
-      while (true) {
-        spi_xfer(fifo_tx, rx_buffer, 8);
-        if ((rx_buffer[1] >> 3) == 0x04) {
-          break;
-        }
-      }
-
-    } else if (diff_fifo > 0) {
+    if (diff_fifo > 0) {
 
       cnt_pos_diff_fifos++;
       if (diff_fifo > max_diff_fifo) max_diff_fifo = diff_fifo;
 
       // check if fifo_rx is full
-      // when it is full, it is a fatal condition
-      // only fifo_rx_nlines is shared between threads
-      // hence the mutex
-      pthread_mutex_lock(&lock);
-      const bool fifo_rx_full = (fifo_rx_nlines == NUM_FIFO_RX_LINES);
+      if (fifo_rx_nlines == NUM_FIFO_RX_LINES) {
+        continue;
+      }
+      
       if (fifo_rx_nlines > max_fifo_rx_nlines) {
         max_fifo_rx_nlines = fifo_rx_nlines;
       }
-      pthread_mutex_unlock(&lock);
 
-      // sensor read does not wait for fifo_rx to have space
-      // since sensor is producing data continuously
-      // if this happens, unfortunately it has to fail
-      if (fifo_rx_full) {
-        printf("\nERROR. no fifo_rx lines left\n");
-        sensor_reader_break = true;
-        break;
-      }
-
-      // not all diff_fifo is read
-      // max FIFO_RX_LINE_MAX_SAMPLES is read from sensor's FIFO
-      if (diff_fifo > FIFO_RX_LINE_MAX_SAMPLES) {
-        cnt_line_is_too_small++;
-        samples_to_read = FIFO_RX_LINE_MAX_SAMPLES;
-      } else {
-        samples_to_read = diff_fifo;
-      } 
-
+      // display progress
       // every second, display progress as a single char
       // . means everything is ok
       // [0..F] means this much line is too small event happened in last second
       // X means >Fh times line is too small event happened
       clock_gettime(CLOCK_MONOTONIC, &tnow);
       if (((tnow.tv_sec - tlast.tv_sec) + 
-            1.0e-9 * (tnow.tv_nsec - tlast.tv_nsec)) > 1.0) {
+            1.0e-9 * (tnow.tv_nsec - tlast.tv_nsec)) > progress_seconds) {
         const uint32_t temp1 = cnt_ovrs - last_cnt_ovrs;
         const uint32_t temp2 = cnt_line_is_too_small - last_cnt_line_is_too_small;
         if (temp1 > 0) {
@@ -644,7 +622,43 @@ void *sensor_reader(void *vargp) {
 
       uint8_t* current_line = fifo_rx + fifo_rx_write_idx*FIFO_RX_LINE_SIZE;
 
-      spi_xfer(fifo_tx, current_line+1, samples_to_read*7+1);
+      if (ovr) {
+
+        cnt_ovrs++;
+
+        // when overrun happens
+        // discard until a timestamp is found
+        while (true) {
+
+          // for some strange edge case to break from this loop
+          if (sensor_reader_break) break;
+
+          // read one sample
+          spi_xfer(fifo_tx, current_line+1, 8);
+
+          // check if it is timestamp, if so, save it and continue
+          // if not, repeat
+          if ((current_line[2] >> 3) == 0x04) {
+            samples_to_read = 1;
+            break;
+          }
+
+        }
+
+      } else {
+
+        // not all diff_fifo is read
+        // max FIFO_RX_LINE_MAX_SAMPLES is read from sensor's FIFO
+        if (diff_fifo > FIFO_RX_LINE_MAX_SAMPLES) {
+          cnt_line_is_too_small++;
+          samples_to_read = FIFO_RX_LINE_MAX_SAMPLES;
+        } else {
+          samples_to_read = diff_fifo;
+        } 
+
+        spi_xfer(fifo_tx, current_line+1, samples_to_read*7+1);
+
+      }
 
       current_line[0] = samples_to_read;
       line_usage_histogram[samples_to_read]++;
@@ -673,59 +687,36 @@ void *sensor_reader(void *vargp) {
 
   }
 
-  pthread_mutex_lock(&lock);
-  printf("\n\n");
+  pthread_mutex_lock(&print_stat_lock);
 
-  // print status if no error happened
+  printf("\n");
   printf("------ sensor_reader stats ------\n");
   printf("samples_read:           %llu\n", samples_read);
-  printf("cnt_ovrs:               %u\n", cnt_ovrs);
+  printf("cnt_ovrs:               %llu\n", cnt_ovrs);
   printf("max_diff_fifo:          %u\n", max_diff_fifo);
   printf("avg_diff_fifo:          %.1lf\n", 
       ((double)total_diff_fifo/(double)cnt_pos_diff_fifos));
   printf("cnt_pos_diff_fifos:     %llu\n", cnt_pos_diff_fifos);
   printf("cnt_neg_diff_fifos:     %llu\n", cnt_neg_diff_fifos);
-  printf("fifo_rx_write_idx:      %u\n", fifo_rx_write_idx);
-  printf("cnt_write_idx_reset:    %u\n", cnt_write_idx_reset);
-  printf("------\n\n");
+  printf("cnt_write_idx_reset:    %llu\n", cnt_write_idx_reset);
+  printf("------\n");
 
+  printf("\n");
   printf("------ fifo rx stats ------\n");
-  printf("max_fifo_rx_nlines:     %u\n", cnt_write_idx_reset);
-  printf("cnt_line_too_small:     %u\n", cnt_line_is_too_small);
+  printf("max_fifo_rx_nlines:     %llu\n", cnt_write_idx_reset);
+  printf("cnt_line_too_small:     %llu\n", cnt_line_is_too_small);
   printf("line_usage:");
   uint64_t line_usage_total_nsamples = 0;
   for (uint32_t i = 0; i < FIFO_RX_LINE_MAX_SAMPLES; i++) {
-    uint32_t line_usage = line_usage_histogram[i];
+    uint64_t line_usage = line_usage_histogram[i];
     line_usage_total_nsamples += (line_usage * i);
-    printf(" %u", line_usage);
+    printf(" %llu", line_usage);
   }
   printf("\n");
   printf("line_usage_total_nsamples:  %llu\n", line_usage_total_nsamples);
-  printf("------\n\n");
-  pthread_mutex_unlock(&lock);
+  printf("------\n");
+  pthread_mutex_unlock(&print_stat_lock);
 
-  if (!sensor_reader_break) {
-
-    printf("wait for file_writer to terminate...\n");
-
-    // wait for file writer up to duration seconds
-    // checking every second if it is terminated
-    for (uint32_t i = 0; i < duration; i++) {
-      if (file_writer_terminated) break;
-      else sleep(1);
-    }
-
-    // strange, why it is not terminated
-    if (!file_writer_terminated) {
-
-      printf("ERROR: file_writer thread did not terminate on its own after %u seconds.\n", duration);
-      printf("       This should probably never happen unless file I/O is very slow.\n");
-      printf("       There are probably missing samples at the end of the output file.\n");
-
-    }
-
-  }
-    
   return NULL;
 
 }
@@ -741,6 +732,10 @@ int main(int argc, char *argv[]) {
   if (argc == 2) {
     duration = strtoul(argv[1], NULL, 10);
   }
+
+  if (duration <= (60 * 60 * 1)) progress_seconds = 1.0;
+  else if (duration <= (60 * 60 * 6)) progress_seconds = 5.0;
+  else progress_seconds = 10.0;
 
   spi_configure();
 
@@ -778,6 +773,9 @@ int main(int argc, char *argv[]) {
 
   signal(SIGINT, sig_handler);
 
+  time_t start;
+  time(&start);
+
   pthread_t tid_sensor_reader;
   pthread_create(&tid_sensor_reader, NULL, sensor_reader, NULL);
 
@@ -797,18 +795,57 @@ int main(int argc, char *argv[]) {
 
   pthread_join(tid_sensor_reader, NULL);
 
+  printf("sensor_reader terminated.\n");
+
   if (sensor_reader_break) {
 
     printf("breaking the file_writer to terminate...\n");
     file_writer_break = true;
-    pthread_join(tid_file_writer, NULL);
-    printf("ERROR. Do not use the output files.\n");
+
+  } else {
+
+    printf("wait for file_writer to terminate...\n");
+
+  }
+
+  // wait for file writer up to duration seconds
+  // checking every second if it is terminated
+  for (uint32_t i = 0; i < duration; i++) {
+    if (file_writer_wait_break) {
+      printf("breaking the file_writer wait loop...\n");
+      break;
+    }
+    if (file_writer_terminated) {
+      printf("file_writer terminated.\n");
+      break;
+    }
+    else sleep(1);
+  }
+
+  // strange, why it is not terminated
+  if (!file_writer_terminated) {
+
+    printf("\n");
+    printf("ERROR: file_writer thread did not terminate on its own after %u seconds.\n", duration);
+    printf("       This should never happen unless there is an error or file I/O is very slow.\n");
+    printf("       Do not use the output files.\n");
+    printf("\n");
+
     quitf();
 
   } else {
 
     // append afactor and tfactor to the file
     FILE* fp = fopen(TEMP_FILE_META, "wb");
+    struct tm *ptm = gmtime(&start);
+    int year = ptm->tm_year + 1900;
+    fwrite(&year, sizeof(int), 1, fp);
+    int mon = ptm->tm_mon + 1;
+    fwrite(&mon, sizeof(int), 1, fp);
+    fwrite(&(ptm->tm_mday), sizeof(int), 1, fp);
+    fwrite(&(ptm->tm_hour), sizeof(int), 1, fp);
+    fwrite(&(ptm->tm_min), sizeof(int), 1, fp);
+    fwrite(&(ptm->tm_sec), sizeof(int), 1, fp);
     fwrite(&duration, sizeof(uint32_t), 1, fp);
     fwrite(&nsamples, sizeof(uint64_t), 1, fp);
     const double fs = FULL_SCALE;
@@ -818,7 +855,9 @@ int main(int argc, char *argv[]) {
     fwrite(&tfactor, sizeof(double), 1, fp);
     fclose(fp);
 
-    printf("SUCCESS. Data collection finished. %s is OK.\n", TEMP_FILE);
+    printf("\n");
+    printf("SUCCESS. Output files are valid.\n");
+    printf("\n");
     quits();
 
   }
