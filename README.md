@@ -126,6 +126,6 @@ Timestamp value is an 32-bit unsigned integer, and it wraps back to 0 after the 
 
 Below is a recording of 900s, converted with iis3dwb-fifo2xyzt and plotted with MATLAB.
 
-!(plot-900s.png)
+![plot of 900s](plot-900s.png)
 
 # Performance
