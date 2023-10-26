@@ -144,6 +144,22 @@ This is quite a perfect run, no FIFO overruns, no line was too small and `max_fi
 
 ## 3600 (1 hour)
 
+This run resulted:
+
+- cnt_ovrs: 0
+- max_fifo_rx_nlines: 32
+- cnt_line_too_small: 0
+
+`max_fifo_rx_nlines` very slightly increased but other stats are still very good.
+
 ## 21600 (6 hours)
+
+This run resulted:
+
+- cnt_ovrs: 0
+- max_fifo_rx_nlines: 655
+- cnt_line_too_small: 0
+
+`max_fifo_rx_nlines` increased (still very small comparing to number of lines available which is 1M), other stats are still very good. 
 
 ## 86400 (24 hours)
