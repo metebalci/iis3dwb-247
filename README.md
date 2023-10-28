@@ -132,6 +132,8 @@ Below is a plot of 720 seconds of samples, converted with iis3dwb-fifo2xyzt and 
 
 # Performance
 
+In terms of the result, there is no difference between running the program for a short duration or a very long duration.
+
 ## 720 seconds (12 minutes)
 
 The run which generated the 720 seconds plot above resulted:
@@ -163,3 +165,11 @@ This run resulted:
 `max_fifo_rx_nlines` increased (still very small comparing to number of lines available which is 1M), other stats are still very good. 
 
 ## 86400 (24 hours)
+
+This run resulted:
+
+- cnt_ovrs: 0
+- max_fifo_rx_nlines: 2631
+- cnt_line_too_small: 0
+
+`max_fifo_rx_nlines` increased (still very small comparing to number of lines available which is 1M), other stats are still very good.
