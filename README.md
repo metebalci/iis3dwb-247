@@ -173,3 +173,13 @@ This run resulted:
 - cnt_line_too_small: 0
 
 `max_fifo_rx_nlines` increased (still very small comparing to number of lines available which is 1M), other stats are still very good.
+
+## 604800 (7 days)
+
+This run resulted:
+
+- cnt_ovrs: 0
+- max_fifo_rx_nlines: 18292
+- cnt_line_too_small: 1672
+
+`max_fifo_rx_nlines` increased (still very small comparing to number of lines available which is 1M) and the line was too small some time but there was no overrun.
